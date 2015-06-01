@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html>
+<head> 
+<title>HTML5 Games - Typing Blood</title>
+<script type="text/javascript>
+/**
+ * Typing Blood
+ * 
+ * ランダムに落ちてくる文字をタイプするだけのタイピングゲーム
+ * パーティクル・グラデーション・テキスト・ライン・ context.shadow・キーイベントの組み合わせ
+ * スコア計算とレベルアップロジックは真面目にテストしてないので超適当です
+ *
+ * [enter] Start/Resume
+ * [space] Pause
+ */
+
+//MooTools $random
+function _random(Min, Max){
+  return Math.floor(Math.random() * (Max - Min + 1) + Min);
+}
+
+var TypingBlood = function(){
+  var game = {
+
+    canvas:null,
+    context:null,
+    playing : false,
+    loop_timer:null, //タイマーの棺桶
+    
+    bones:[],//テキストオブジェクト入れる
+    powders:[],
+    
+    karma:0, //カルマ
+    
+    bloodPondLineHeight:10,//１ミスあたりの高さ
+    bloodPondHeight:0,
+    bloodPondAlpha:1,
+    bloodParticles:[],
+    
+    scoreBord:null,
+    level:1,//難易度
+    miss:0,
+    pass:0,
+    totalScore:0,
+    combo:0,
+    
+    ascii : [48,49,50,51,52,53,54,55,56,57,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89],//ASCII CODE
+    
+    //イベントリスナー
+    addEvent:function(obj, type, fn){
+    if(obj.addEventListener)
+      obj.addEventListener( type, fn, false );
+    },
+    
+    //実行関数。引数はcanvasのID
+    load:function(id){
+    
+      this.addEvent(window, 'load', function(event){
+    
+        game.canvas = document.getElementById(id);
+        game.scoreBord =  document.getElementById("score_bord");
+        game.message = document.getElementById("message");
+        
+        if (game.canvas.getContext){
+          game.context = game.canvas.getContext('2d');
+          game.setCanvas();
+          
+          game.setPondSize();
+          game.title();
+          
+        }
+      
+      });
+      
+      //画面がリサイズされたら
+      this.addEvent(window, 'resize', function(){
+        game.setCanvas();
+        if(!game.playing) game.title();
+      });
+      
+      //pause
+      this.addEvent(window,'blur', function(e){
+        game.pause();
+      });
+      
+      //キー押されたとき
+      this.addEvent(document,'keydown', function(e){
+      
+    
+        if(e.keyCode==32){
+          game.pause();
+        }
+    
+        //再開
+        if(e.keyCode==13){
+          
+          if(!game.loop_timer && game.totalScore === 0){//start
+            game.play();
+          
+          }else if(!game.playing && game.loop_timer){//gameover
+            game.level=1;
+            game.miss=0;
+            game.pass=0;
+            game.karma=0;
+            game.totalScore=0;
+            game.combo=0;
+            game.bloodPondAlpha =1;
+            game.score();
+            game.setPondSize();
+            
+            clearInterval(game.loop_timer);
+            game.play();
+            
+          }else if(!game.playing){//pause
+            game.play();
+          }
+        
+        }
+        
+        var index = game.searchString(e.keyCode);
+        
+        if(index!==false){
+          game.bones[index].clear = true;
+          game.pass++;
+          game.combo++;
+          game.karma++;
+          game.totalScore += 100;
+        }else{
+          game.miss++;
+          game.combo=0;
+          game.karma-=2;
+          game.totalScore -= 100;
+          game.bloodPondHeight+= game.bloodPondLineHeight;//池拡張
+        }
+        
+      });
+      
+    },
+    
+    //池のサイズセット
+    setPondSize:function(){
+      game.bloodPondLineHeight = Math.floor(game.height/100);
+      game.bloodPondHeight = Math.floor((game.height/100)-game.bloodPondLineHeight)*100;
+    },
+    
+    //亡者よ眠れー
+    pause:function(){
+      
+      if(game.playing){
+        game.message.className = "pause";
+        game.message.innerHTML = '<p style="color:#fff;position:absolute;top:50%;left:0;width:100%;margin-top:-40px;text-align:center;font-size:20px;">Typing Blood<br/>- Pause -<br />push enter key</p>';
+      }
+      
+      clearInterval(game.loop_timer);
+      game.playing = false;
+      game.loop_timer = null;
+    },
+    
+    //ふっかつのじゅもん
+    play:function(){
+      game.playing = true;
+      game.message.className = "";
+      game.message.innerHTML = 'Press [space] to pause, [enter] to resume...';
+      game.loop_timer = setInterval(function(){game.loop();}, 1000/60);
+      
+    },
+    
+    //タイトル表示（もっさり感とともに）
+    title:function(){
+      
+      game.context.save();
+      game.context.font = "42px 'Arial'";
+      var str = "Typing Blood";
+      tm = game.context.measureText(str);
+      
+      game.context.save();
+      game.context.fillStyle = "red";
+      game.context.shadowColor = "#ff0000";
+      game.context.shadowBlur = 10;
+      game.context.fillText(str, game.width/2-tm.width/2, game.height/2-80);
+      game.context.restore();
+      
+      game.context.font = "30px 'Arial'";
+      
+      game.context.fillStyle = "#fff";
+      
+      str = "[enter] Game start";
+      tm = game.context.measureText(str);
+      game.context.fillText(str, game.width/2-tm.width/2, game.height/2+20);
+      
+      game.context.font = "11px 'Arial'";
+      
+      str = "落ちてくる文字と同じキーをタイプすると文字を粉砕して血の池に沈むのを防ぎます。";
+      tm = game.context.measureText(str);
+      game.context.fillText(str, game.width/2-tm.width/2, game.height/2+60);
+      
+      str = "画面が全て血色に染まったらゲームオーバーです。";
+      tm = game.context.measureText(str);
+      game.context.fillText(str, game.width/2-tm.width/2, game.height/2+75);
+    
+      game.context.restore();
+    },
+    
+    //Canvasのセッター
+    setCanvas:function(){
+      game.width  = window.innerWidth;
+      game.height = window.innerHeight;
+      game.canvas.height = game.height;
+      game.canvas.width  = game.width;
+      game.canvas.style.backgroundColor="#000";
+      game.canvas.style.position = 'absolute';
+      game.canvas.style.top ="0px";
+      game.canvas.style.left="0px";
+      game.bloodPondLineHeight = Math.round(game.height/100);
+    },
+    
+    //骨と言う名のテキスト作成
+    createText:function(){
+      var c =  game.ascii[_random(0, game.ascii.length-1)];
+      var x = Math.floor(_random(35, game.width-35));
+      var y = (game.level>1)? Math.floor( 0 - 20 * (Math.random()*7) ):0;
+      var t = {
+        code : c,
+        text : String.fromCharCode(c),
+        x : x,
+        y : y,
+        powder:null,
+        clear:false
+      };
+      
+      game.bones.push(t);
+    },
+    
+    /** 文字検索
+     * @code event.keyCode
+     */
+    searchString:function(code){
+      for (var key in game.bones){
+        if (game.bones[key].code == code) return key;
+      }
+      
+      return false;
+    },
+    
+    /*血の池地獄という名のグラデを作成
+     *@a  alpha
+    */
+    createBloodPond:function(a){
+      var h = game.height-game.bloodPondHeight;
+      a = (a<=0)? 0:a; 
+      game.context.save();
+      var g  = game.context.createLinearGradient(0, h, 0, game.width);
+      g.addColorStop(0,'rgba('+game.bloodPondHeight+', 0, 0, '+a+')');
+      g.addColorStop(1,'rgba('+game.bloodPondLineHeight+', 0, 0, '+a+')');
+      game.context.fillStyle = g;
+      
+      game.context.beginPath();
+      game.context.rect(0, h, game.width, game.height);
+      game.context.fill();
+      
+      //水面
+      game.context.shadowColor = "#ff0000";
+      game.context.shadowBlur = 5;
+      game.context.strokeStyle = 'rgb('+(game.bloodPondHeight+60)+',0,0)';
+      game.context.beginPath();
+      game.context.lineTo(0, h);
+      game.context.lineTo( game.width, h);
+      game.context.stroke();
+      game.context.restore();
+      
+    },
+    
+    //血しぶきパーティクル作成
+    createBloods:function ( x, y ) {
+      var end = 10 + ( Math.random() * 15 );
+      
+      while( end >= 0 ) {
+        var p = {
+           x: x,
+           y: y,
+           vx:Math.random() * 0.5,
+           vy:Math.random() * 1 - 6.7,
+           r: -4 + Math.random() * 8,
+           alpha : 1
+        };
+        
+        game.bloodParticles.push( p );
+        end--;
+      }
+    },
+    
+    //骨粉砕パーティクル作成
+    createPowder:function(x, y){
+      var q = 20 + ( Math.random() * 15 );
+      var a = [];
+      
+      while( q >= 0 ) {
+        var p = {
+           x: Math.floor(x +( Math.sin(q) * 0.03 )),
+           y: Math.floor(y + Math.cos(q) * 10 ),
+           vx:-4 + Math.random() * 8,
+           vy:-4 + Math.random() * 8,
+           alpha : 1
+        };
+        
+        game.powders.push(p);
+        q--;
+      }
+      
+    },
+  
+    //ループ
+    loop:function(){
+       
+      game.context.save();
+      
+      //テキスト作成
+      if((game.bones.length < 1 * game.level) && game.playing){
+        game.createText();
+      }
+      
+      game.context.clearRect(0,0, game.width, game.height);
+      var borderLine = game.height-game.bloodPondHeight;
+      
+      //テキスト動かす
+      for(i=0; i < game.bones.length; i++){
+        var e = game.bones[i];
+          
+        if(e.y < borderLine){
+          e.y = e.y + 2;
+        }else{
+          e.y = e.y + 0.3;
+        }
+        
+        game.context.font = "30px 'Arial'";
+        game.context.fillStyle = "#fff";
+        game.context.fillText(e.text, e.x, e.y);
+        
+        if(e.clear){//粉砕フラグ立ってたら
+        
+          game.bones.splice( i, 1 );//削除
+          game.createPowder(e.x, e.y);
+          
+          if(game.bloodPondHeight!==0) game.bloodPondHeight -= game.bloodPondLineHeight;//池縮小
+      
+        }else if(e.y >= (borderLine+20)) {//高さ超えたら
+        
+          game.bloodPondHeight+= game.bloodPondLineHeight;//池拡張
+          
+          game.bones.splice( i, 1 );//削除
+          game.miss++;
+          game.karma-=3;
+          game.totalScore-=100;
+          game.createBloods(e.x, borderLine);//血飛沫作成
+        }
+      }
+      
+      if( game.bloodPondHeight >= game.height) {
+        game.playing = false;
+      }
+      
+      
+      //骨粉ぶわー
+      for( b = 0; b < game.powders.length; b++ ) {
+        powder = game.powders[b];
+  
+        powder.x += powder.vx;
+        powder.y += powder.vy;
+        
+        powder.alpha -= 0.02;
+        
+        game.context.save();//fillStyle混じるからセーブしとく
+        game.context.fillStyle = 'rgba(255,255,255,'+Math.max(powder.alpha,0)+')';
+        game.context.fillRect( powder.x, powder.y, 2, 2);
+        game.context.restore();
+        
+        if( powder.alpha <= 0 ) {
+          game.powders.splice( b, 1 );
+        }
+      }
+      
+      //血飛沫ばしゃー
+      for( k = 0; k < game.bloodParticles.length; k++ ) {
+        p = game.bloodParticles[k];
+        
+        p.vy += 0.5;//おっとそこまでだ
+
+        p.x += p.vx + p.r;
+        p.y += p.vy ;
+        
+        p.alpha -= 0.01;
+        
+        game.context.save();//血の池のfillStyleと混じるからセーブしとく
+        game.context.fillStyle = 'rgba(255,0,0,'+Math.max(p.alpha,0)+')';
+        game.context.fillRect( p.x, p.y, 3, 3 );
+        game.context.restore();
+        
+        if( p.alpha <= 0 ) {
+          game.bloodParticles.splice( k, 1 );
+        }
+      }
+      
+      if(!game.playing){
+        game.bloodPondAlpha -= 0.01;//血の池地獄の透明度
+        game.endroll();
+      }
+      
+      game.createBloodPond(game.bloodPondAlpha);
+      
+      game.context.restore();
+      
+      game.score();
+      
+      if(game.bloodPondAlpha <= 0) {//透けたら停止
+        clearInterval(game.loop_timer);
+      }
+    },
+    
+    //ゲームオーバー表示
+    endroll:function(){
+      game.context.save();
+      game.context.font = "42px 'Arial'";
+      game.context.fillStyle = "#fff";
+      
+      str = "Game Over";
+      tm = game.context.measureText(str);
+      
+      game.context.fillText(str, game.width/2-tm.width/2, 200);
+      game.context.font = "24px 'Arial'";
+      
+      str = "[enter] Restart game";
+      tm = game.context.measureText(str);
+      game.context.fillText(str, window.innerWidth/2-tm.width/2, 250);
+      game.context.restore();
+      
+    },
+    
+    //スコア計算と表示（超適当）
+    score:function(){
+      
+      var c = Math.floor((game.pass+game.combo-game.miss+game.karma)/13.5);
+      
+      if(c>0) game.level = c;
+      
+      var html = "Miss:"+game.miss+"  Passed:"+game.pass+" Combo:"+game.combo+"  Level:"+game.level+"  Score:"+game.totalScore;
+      game.scoreBord.innerHTML = html;
+    }
+    
+  };
+  
+  return game;
+
+};
+
+var typing = new TypingBlood();
+typing.load('hell');
+
+
+
+</script>
+
+<style type="text/css">
+body{background:#000;margin:0;padding:0}
+#score_bord{position:absolute;left:0;top:0;z-index:1;padding:5px;color:#666;font-size:14px;font-family:Verdana, Geneva, sans-serif;}
+#message{
+  font-family:Verdana, Geneva, sans-serif;
+  position:absolute;
+  right:0;
+  bottom:0;
+  z-index:20;
+  color:#C00;
+  font-size:11px;
+}
+
+.pause {
+  background-color:#000;
+  left:0;
+  top:0;
+  height:100%;
+  width:100%;
+}
+canvas{z-index:0;}
+
+html,body, #hell{width:100%;height:100%;}
+
+</style>
+</head>
+<body>
+<div id="score_bord"></div>
+<div id="message"></div>
+<canvas id="hell"></canvas>
+
+</body>
+</html>
